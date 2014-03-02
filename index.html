@@ -1,0 +1,166 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1, maximum-scale=1">
+    <title>Music</title>
+    <style>
+      .instrument {
+        display: inline-block;
+        border: 1px solid black;
+      }
+      canvas {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Music</h1>
+    <pre id="clock"></pre>
+    <script>
+
+      function SampledInstrument (context, url) {
+        this.context = context;
+        this.gain = context.createGain();
+        this.bus = this.gain;
+        this.url = url;
+      }
+      SampledInstrument.prototype.load = function () {
+        var self = this;
+        return new Promise(function (resolve, reject) {
+          var request = new XMLHttpRequest();
+          request.open("GET", self.url, true);
+          request.responseType = "arraybuffer";
+
+          request.onload = function () {
+            // Asynchronously decode the audio file data in request.response
+            self.context.decodeAudioData(
+              request.response,
+              function (buffer) {
+                if (!buffer) {
+                  reject('data could not be decoded');
+                  return;
+                }
+                self.buffer = buffer;
+                resolve(self)
+              },
+              function () {
+                reject('data in ' + self.url + ' could not be decoded');
+              }
+            );
+          }
+
+          request.onerror = function () {
+            reject('BufferLoader: XHR error');
+          }
+
+          request.send();
+        });
+      };
+      SampledInstrument.prototype.play = function (time, vol) {
+        var source = context.createBufferSource();
+        source.buffer = this.buffer;
+        source.connect(this.bus);
+        if (vol) {
+          this.gain.gain.setValueAtTime(vol, time);
+        }
+        source.start(time);
+      };
+      SampledInstrument.prototype.connect = function (destination) {
+        this.bus.connect(destination);
+      };
+
+      window.onload = init;
+      var context;
+
+      function init () {
+        // Fix up prefixing
+        window.AudioContext = window.AudioContext || window.webkitAudioContext;
+        context = new AudioContext();
+
+        var snare = new SampledInstrument(context, 'wav/snare2.wav');
+        var bass = new SampledInstrument(context, 'wav/bass1.wav');
+        var hihat = new SampledInstrument(context, 'wav/hihat1.wav');
+        snare.connect(context.destination);
+        bass.connect(context.destination);
+        hihat.connect(context.destination);
+        Promise.all([snare.load(), bass.load(), hihat.load()]).then(function () {
+          var startTime = context.currentTime + 0.500;
+          var tempo = 120; // BPM (beats per minute)
+          var quant = (60 / tempo) / 2;
+          var bar = quant * 8;
+
+          var beat = [
+            [0, bass, 1],
+            [2, bass, .8],
+            [4, bass, .9],
+            [6, bass, 1],
+
+            [2, snare, .8],
+            [6, snare, 1],
+
+            [1, hihat, .3],
+            [3, hihat, .3],
+            [5, hihat, .3],
+            [7, hihat, .3]
+
+          ];
+
+          var beat2 = beat.slice(0);
+          beat2.push([7, hihat, .5]);
+          beat2.push([7.5, hihat, .5]);
+
+          var bars = [beat,beat2,beat,beat2];
+
+          var scheduled = startTime;
+          var barPos = 0;
+          function scheduleBar () {
+            if (context.currentTime + bar > scheduled) {
+              beat = bars[barPos % 4];
+              beat.forEach(function (hit) {
+                hit[1].play(scheduled + quant * hit[0], hit[2]);
+              });
+              barPos++;
+              scheduled += bar;
+            }
+          }
+          var clockEl = document.querySelector('#clock');
+          function clock() {
+            var pos = context.currentTime - startTime / bar;
+            clockEl.textContent = (pos | 0) + ':' +
+              (pos % 1 * 4 + 1| 0) + '.' +
+              (pos % 1 * 400 % 100 | 0) ;
+            requestAnimationFrame(clock);
+          }
+          clock();
+          setInterval(scheduleBar, 10);
+          scheduleBar();
+
+          render(snare);
+          render(bass);
+          render(hihat);
+        }, console.log);
+
+      }
+
+      function render(ins) {
+        var box = document.createElement('div');
+        box.className = 'instrument';
+        box.appendChild(document.createTextNode(ins.url));
+        document.body.appendChild(box);
+        var c = document.createElement('canvas');
+        box.appendChild(c);
+        var ctx = c.getContext('2d');
+        ctx.beginPath();
+        var d = ins.buffer.getChannelData(0);
+        for (var i=0; i < d.length; i++) {
+          ctx.fillRect(i / d.length * c.width|0, c.height/2|0, 1, Math.ceil(d[i] * c.height / 2) | 0);
+        }
+        box.addEventListener('click', function (e) {
+          ins.play(0,1);
+        })
+      }
+
+    </script>
+  </body>
+</html>
